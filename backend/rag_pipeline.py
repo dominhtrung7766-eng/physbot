@@ -9,7 +9,7 @@ TOP_K = 5
 FINAL_TOP_K = 3
 MAX_DISTANCE = 1.0
 DEDUP_SIMILARITY = 0.6
-TOKEN_BUDGET = 1800
+TOKEN_BUDGET = 3000
 MAX_CHUNK_CHARS = 800
 
 _model = None
@@ -465,14 +465,25 @@ def rerank_chunks(question: str, docs: list, metas: list, dists: list, query_typ
 # ══════════════════════════════════════════════════════════════════
 
 def merge_neighbor_chunks(collection, meta: dict, query_type="mixed") -> str:
-    source = meta.get("source")
-    idx = meta.get("chunk_index", 0)
+    source        = meta.get("source")
+    idx           = meta.get("chunk_index", 0)
+    source_type   = meta.get("type", "")
+    source_folder = meta.get("source_folder", "raw")
+
+    # Web chunks: ID format là "web_{source}_text_{idx}"
+    # Raw/exercises: ID format là "{source}_{idx}"
+    if source_type == "web" or source_folder == "web":
+        id_prefix = f"web_{source}_text"
+    else:
+        id_prefix = source
+
     offsets = [-1, 0, 1] if query_type == "exercise" else [0]
     merged = []
 
     for offset in offsets:
+        chunk_id = f"{id_prefix}_{idx + offset}"
         try:
-            result = collection.get(ids=[f"{source}_{idx + offset}"])
+            result = collection.get(ids=[chunk_id])
             if result["documents"]:
                 text = result["documents"][0]
                 if len(text) > MAX_CHUNK_CHARS:
