@@ -1,16 +1,15 @@
 import re
 import chromadb
 from sentence_transformers import SentenceTransformer
-import os as _os
 
-DB_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data", "chroma_db")
+DB_DIR = "data/chroma_db"
 COLLECTION_NAME = "physbot_sgk"
-    
+
 TOP_K = 5
 FINAL_TOP_K = 3
 MAX_DISTANCE = 1.0
 DEDUP_SIMILARITY = 0.6
-TOKEN_BUDGET = 1200
+TOKEN_BUDGET = 3000
 MAX_CHUNK_CHARS = 800
 
 _model = None
@@ -497,8 +496,9 @@ def estimate_tokens(text: str) -> int:
 
 
 def trim_context_to_budget(chunks: list, question: str, system_prompt: str) -> list:
-    base = estimate_tokens(system_prompt) + estimate_tokens(question) + 300
-    base += 150
+    # Chỉ tính question + overhead, KHÔNG tính system_prompt vào budget context
+    # vì system_prompt nằm ngoài context window của RAG
+    base = estimate_tokens(question) + 300
     budget = TOKEN_BUDGET - base
 
     if budget <= 0:
