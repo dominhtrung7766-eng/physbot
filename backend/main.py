@@ -608,7 +608,19 @@ async def admin_delete_session(session_id: str):
 # ══════════════════════════════════════════════════════════════════
 # HEALTH
 # ══════════════════════════════════════════════════════════════════
-
+@app.post("/debug/rag")
+async def debug_rag(req: AskRequest):
+    context = retrieve_context(
+        question=req.question,
+        system_prompt=FULL_SYSTEM_PROMPT,
+        verbose=True,
+        groq_client=groq_client,
+    )
+    return {
+        "question": req.question,
+        "context_length": len(context),
+        "context_preview": context[:500] if context else "EMPTY",
+    }
 @app.get("/health")
 async def health():
     db_path = Path("data/chroma_db")
