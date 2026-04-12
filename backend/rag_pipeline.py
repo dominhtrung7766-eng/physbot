@@ -1,10 +1,11 @@
 import re
 import chromadb
 from sentence_transformers import SentenceTransformer
+import os as _os
 
-DB_DIR = "data/chroma_db"
+DB_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data", "chroma_db")
 COLLECTION_NAME = "physbot_sgk"
-
+    
 TOP_K = 5
 FINAL_TOP_K = 3
 MAX_DISTANCE = 1.0
@@ -28,8 +29,12 @@ def _get_model():
 def _get_collection():
     global _collection
     if _collection is None:
+        print(f"[RAG] Connecting ChromaDB tại: {DB_DIR}")
         client = chromadb.PersistentClient(path=DB_DIR)
+        cols = client.list_collections()
+        print(f"[RAG] Collections: {[c.name for c in cols]}")
         _collection = client.get_collection(COLLECTION_NAME)
+        print(f"[RAG] Collection '{COLLECTION_NAME}' count: {_collection.count()}")
     return _collection
 
 
