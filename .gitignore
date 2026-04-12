@@ -1,0 +1,45 @@
+# ── Môi trường Python ─────────────────────────────────────────────
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ── Biến môi trường ───────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Dữ liệu thô & đã xử lý ───────────────────────────────────────
+data/raw/
+data/exercises/
+data/processed/
+data/chroma_db/
+
+# ── Audio tạm ─────────────────────────────────────────────────────
+*.wav
+*.mp3
+*.ogg
+
+# ── Model cache ───────────────────────────────────────────────────
+.cache/
+models/
+*.bin
+*.safetensors
+*.pt
+*.onnx
+
+# ── IDE / OS ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Log ───────────────────────────────────────────────────────────
+*.log
+logs/

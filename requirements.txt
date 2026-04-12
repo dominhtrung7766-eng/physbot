@@ -1,0 +1,48 @@
+# ══════════════════════════════════════════════════════════════════
+# PhysBot — Requirements
+# Python 3.10+
+# ══════════════════════════════════════════════════════════════════
+
+# ── Core AI / LLM ─────────────────────────────────────────────────
+groq>=0.9.0
+sentence-transformers>=2.7.0
+transformers>=4.40.0          # CLIP (ingest_images.py)
+torch>=2.2.0                  # CLIP backend
+
+# ── Vector Database ───────────────────────────────────────────────
+chromadb>=0.5.0
+
+# ── PDF Processing ────────────────────────────────────────────────
+PyPDF2>=3.0.0
+pdfplumber>=0.10.0
+pdf2image>=1.17.0             # OCR fallback — cần cài thêm Poppler
+pytesseract>=0.3.10           # OCR fallback — cần cài thêm Tesseract
+pymupdf>=1.24.0               # fitz — dùng trong ingest_images.py
+
+# ── Web Scraping ──────────────────────────────────────────────────
+trafilatura>=1.9.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+selenium>=4.20.0
+webdriver-manager>=4.0.0
+
+# ── Image Processing ──────────────────────────────────────────────
+Pillow>=10.3.0
+
+# ── API Server (main.py) ──────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9       # upload file ảnh
+
+# ── Audio (app.py only) ───────────────────────────────────────────
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.26.0
+pygame>=2.5.2
+gTTS>=2.5.1
+
+# ── Utilities ─────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+rich>=13.7.0
+pydantic>=2.7.0
+slowapi>=0.1.9
