@@ -14,7 +14,7 @@ WORKDIR /app
 # ── Copy requirements trước (tận dụng layer cache) ─────────────────
 COPY requirements.txt .
 
-# ── Cài Python deps ─────────────────────────────────────────────────
+# ── Cài Python deps ────────────────────────────────────────────────
 RUN pip install --no-cache-dir \
     groq \
     sentence-transformers \
@@ -36,16 +36,18 @@ RUN pip install --no-cache-dir \
     pymupdf \
     selenium \
     webdriver-manager \
+    huggingface_hub \
     rich
 
-# ── Copy toàn bộ folder backend/ (chứa main.py + các module) ────────
+# ── Copy source code ────────────────────────────────────────────────
+COPY main.py .
 COPY backend/ ./backend/
 
-# ── Tạo thư mục logs và data ─────────────────────────────────────────
+# ── Tạo thư mục cần thiết ───────────────────────────────────────────
 RUN mkdir -p logs data/chroma_db
 
-# ── Port ─────────────────────────────────────────────────────────────
-EXPOSE 8000
+# ── HF Spaces dùng port 7860 ────────────────────────────────────────
+EXPOSE 7860
 
-# ── Start — main.py nằm trong backend/ nên dùng backend.main:app ─────
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ── Start ───────────────────────────────────────────────────────────
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
