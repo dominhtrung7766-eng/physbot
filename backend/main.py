@@ -331,12 +331,16 @@ def _llm_call(messages: list[dict], use_tools: bool) -> object:
 def handle_normal(question: str, session_id: str = "") -> str:
     t0 = time.perf_counter()
 
+    # Đảm bảo DB sẵn sàng trước khi RAG
+    if not _db_ready.wait(timeout=120):
+        log.warning("DB not ready after 120s", extra={"session_id": session_id})
+
     if is_out_of_scope(question):
         return "Haha tui chỉ giỏi Vật lý THPT thôi nha, mấy thứ khác tui bó tay!"
 
     context    = retrieve_context(question=question,
                                   system_prompt=FULL_SYSTEM_PROMPT,
-                                  verbose=False, groq_client=groq_client)
+                                  verbose=True, groq_client=groq_client)
     rag_prompt = build_rag_prompt(question, context)
 
     sess       = _get_session(session_id) if session_id else None
