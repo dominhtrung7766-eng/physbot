@@ -8,16 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Không cần Tesseract/Poppler trên Render
-# (ingest.py chạy local, không deploy lên server)
-
 # ── Workdir ────────────────────────────────────────────────────────
 WORKDIR /app
 
 # ── Copy requirements trước (tận dụng layer cache) ─────────────────
 COPY requirements.txt .
 
-# ── Cài Python deps (bỏ audio/OCR deps không cần cho server) ───────
+# ── Cài Python deps ─────────────────────────────────────────────────
 RUN pip install --no-cache-dir \
     groq \
     sentence-transformers \
@@ -41,19 +38,14 @@ RUN pip install --no-cache-dir \
     webdriver-manager \
     rich
 
-# ── Copy source code ────────────────────────────────────────────────
-COPY main.py .
+# ── Copy toàn bộ folder backend/ (chứa main.py + các module) ────────
 COPY backend/ ./backend/
 
-# ── Copy ChromaDB đã build sẵn (commit vào repo hoặc dùng volume) ──
-# Nếu commit ChromaDB vào repo thì uncomment dòng dưới:
-# COPY data/chroma_db/ ./data/chroma_db/
-
-# ── Tạo thư mục logs ────────────────────────────────────────────────
+# ── Tạo thư mục logs và data ─────────────────────────────────────────
 RUN mkdir -p logs data/chroma_db
 
 # ── Port ─────────────────────────────────────────────────────────────
 EXPOSE 8000
 
-# ── Start ─────────────────────────────────────────────────────────────
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ── Start — main.py nằm trong backend/ nên dùng backend.main:app ─────
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
