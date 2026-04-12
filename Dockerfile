@@ -12,11 +12,15 @@ ENV PATH="/home/user/.local/bin:$PATH"
 
 COPY --chown=user requirements.txt .
 
+# Cài torch CPU riêng trước (index-url khác PyPI)
+RUN pip install --no-cache-dir --user \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
+# Cài các package còn lại từ PyPI bình thường
 RUN pip install --no-cache-dir --user \
     groq \
     sentence-transformers \
     "transformers>=4.40.0" \
-    torch --index-url https://download.pytorch.org/whl/cpu \
     chromadb \
     fastapi \
     "uvicorn[standard]" \
