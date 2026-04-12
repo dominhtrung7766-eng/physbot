@@ -608,6 +608,24 @@ async def admin_delete_session(session_id: str):
 # ══════════════════════════════════════════════════════════════════
 # HEALTH
 # ══════════════════════════════════════════════════════════════════
+@app.get("/debug/db")
+async def debug_db():
+    import chromadb as _chromadb
+    db_path = Path("data/chroma_db")
+    files = [str(f.relative_to(db_path)) for f in db_path.rglob("*")][:20] if db_path.exists() else []
+    try:
+        client = _chromadb.PersistentClient(path=str(db_path))
+        collections = client.list_collections()
+        counts = {c.name: c.count() for c in collections}
+    except Exception as e:
+        counts = {"ERROR": str(e)}
+    return {
+        "db_path_exists": db_path.exists(),
+        "files": files,
+        "collections": counts,
+    }
+
+
 @app.post("/debug/rag")
 async def debug_rag(req: AskRequest):
     context = retrieve_context(
