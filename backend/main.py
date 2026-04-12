@@ -1,12 +1,12 @@
 """
 main.py
 ──────
-PhysBot API — FastAPI server v3.1
+PhysBot API — FastAPI server v3.2
 
-THAY ĐỔI v3.1 so với v3.0:
-  - [HF] Auto-download ChromaDB từ Hugging Face Hub khi startup
-         (người dùng clone GitHub xong chạy thẳng, không cần ingest)
-  - Giữ nguyên toàn bộ logic v3.0
+THAY ĐỔI v3.2 so với v3.1:
+  - [FIX] ChromaDB download chạy trong background thread
+          → server bind port ngay lập tức, không bị Render restart loop
+  - Giữ nguyên toàn bộ logic v3.1
 """
 
 import json
@@ -33,8 +33,7 @@ load_dotenv()
 
 
 # ══════════════════════════════════════════════════════════════════
-# [HF] AUTO-DOWNLOAD CHROMADB — chạy trước mọi thứ
-# Nếu data/chroma_db chưa có → download từ Hugging Face Hub
+# [HF] AUTO-DOWNLOAD CHROMADB
 # ══════════════════════════════════════════════════════════════════
 
 def _ensure_chromadb():
@@ -42,12 +41,10 @@ def _ensure_chromadb():
     hf_repo_id = os.getenv("HF_REPO_ID")
     hf_token   = os.getenv("HF_TOKEN")
 
-    # Đã có DB → không cần download
     if db_path.exists() and any(db_path.iterdir()):
         print(f"[startup] ChromaDB đã có tại {db_path}")
         return
 
-    # Không cấu hình HF → báo lỗi rõ ràng
     if not hf_repo_id:
         print("[startup] CẢNH BÁO: ChromaDB chưa có và HF_REPO_ID chưa cấu hình.")
         print("[startup] Chạy: python scripts/download_db.py  hoặc  python scripts/ingest.py")
@@ -68,7 +65,6 @@ def _ensure_chromadb():
             token=hf_token,
         )
 
-        # Di chuyển subfolder chroma_db/ vào đúng vị trí
         src = tmp_path / "chroma_db"
         if src.exists():
             if db_path.exists():
@@ -79,7 +75,6 @@ def _ensure_chromadb():
                 shutil.rmtree(db_path)
             shutil.move(str(tmp_path), str(db_path))
 
-        # Dọn tmp
         if tmp_path.exists():
             shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -92,11 +87,19 @@ def _ensure_chromadb():
         print("[startup] Server vẫn chạy nhưng RAG sẽ không hoạt động.")
 
 
-# Gọi trước khi import rag_pipeline (ChromaDB cần có trước)
-_ensure_chromadb()
+# ── [FIX v3.2] Download trong background — KHÔNG block startup ───
+# Server bind port ngay lập tức → Render health check pass
+# Request đến trong lúc DB chưa ready → trả 503 thay vì crash
+_db_ready = threading.Event()
+
+def _download_db_background():
+    _ensure_chromadb()
+    _db_ready.set()
+
+threading.Thread(target=_download_db_background, daemon=True).start()
 
 
-# ── Import sau khi DB đã sẵn sàng ────────────────────────────────
+# ── Import sau khi thread đã start (rag_pipeline load lazy) ──────
 from backend.rag_pipeline import (
     retrieve_context,
     build_rag_prompt,
@@ -179,7 +182,7 @@ FULL_SYSTEM_PROMPT = TTS_RULES + "\n\n" + PHYSBOT_SYSTEM_PROMPT + "\n\n" + VOICE
 # ══════════════════════════════════════════════════════════════════
 
 limiter = Limiter(key_func=get_remote_address)
-app     = FastAPI(title="PhysBot API", version="3.1")
+app     = FastAPI(title="PhysBot API", version="3.2")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
@@ -462,6 +465,10 @@ class IngestPDFRequest(BaseModel):
 @app.post("/ask")
 @limiter.limit("30/minute")
 async def ask(req: AskRequest, request: Request):
+    # Chờ ChromaDB sẵn sàng, tối đa 60 giây
+    if not _db_ready.wait(timeout=60):
+        raise HTTPException(status_code=503,
+                            detail="Database đang khởi động, thử lại sau 30 giây")
     _prune_expired_sessions()
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Câu hỏi không được để trống")
@@ -476,6 +483,9 @@ async def ask(req: AskRequest, request: Request):
 @app.post("/ocr")
 @limiter.limit("20/minute")
 async def ocr(request: Request, file: UploadFile = File(...)):
+    if not _db_ready.wait(timeout=60):
+        raise HTTPException(status_code=503,
+                            detail="Database đang khởi động, thử lại sau 30 giây")
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file ảnh")
     try:
@@ -496,6 +506,9 @@ async def solve_image(
     file:       UploadFile = File(...),
     session_id: str        = "",
 ):
+    if not _db_ready.wait(timeout=60):
+        raise HTTPException(status_code=503,
+                            detail="Database đang khởi động, thử lại sau 30 giây")
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Chỉ chấp nhận file ảnh")
     try:
@@ -602,9 +615,10 @@ async def health():
     db_ok   = db_path.exists() and any(db_path.iterdir())
     return {
         "status":          "ok",
-        "version":         "3.1",
+        "version":         "3.2",
         "model":           MAIN_MODEL,
         "vision_models":   VISION_MODELS,
-        "chromadb":        "ok" if db_ok else "missing",
+        "chromadb":        "ok" if db_ok else "downloading",
+        "db_ready":        _db_ready.is_set(),
         "active_sessions": len(_sessions),
     }
