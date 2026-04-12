@@ -6,17 +6,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN useradd -m -u 1000 user
+# Tạo folder + user khi còn là root
+RUN useradd -m -u 1000 user && \
+    mkdir -p logs data/chroma_db && \
+    chown -R user:user /app
+
 USER user
 ENV PATH="/home/user/.local/bin:$PATH"
 
 COPY --chown=user requirements.txt .
 
-# Cài torch CPU riêng trước (index-url khác PyPI)
+# Cài torch CPU riêng (index-url khác PyPI)
 RUN pip install --no-cache-dir --user \
     torch --index-url https://download.pytorch.org/whl/cpu
 
-# Cài các package còn lại từ PyPI bình thường
+# Cài các package còn lại từ PyPI
 RUN pip install --no-cache-dir --user \
     groq \
     sentence-transformers \
@@ -39,8 +43,6 @@ RUN pip install --no-cache-dir --user \
     rich
 
 COPY --chown=user . .
-
-RUN mkdir -p logs data/chroma_db
 
 EXPOSE 8000
 
