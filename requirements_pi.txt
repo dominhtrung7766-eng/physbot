@@ -1,0 +1,35 @@
+# ══════════════════════════════════════════════════════════════════
+# requirements-pi.txt  —  Raspberry Pi Client
+# Python 3.10+
+# Cài: pip install -r requirements-pi.txt
+#
+# NHẸ HƠN requirements.txt (bỏ RAG, torch, chromadb, PDF tools)
+# Pi chỉ làm: STT → gọi API → TTS
+# ══════════════════════════════════════════════════════════════════
+
+# ── STT (Whisper qua Groq API) ────────────────────────────────────
+groq>=0.9.0
+
+# ── Gọi API server ────────────────────────────────────────────────
+httpx>=0.27.0
+
+# ── Audio I/O ─────────────────────────────────────────────────────
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.26.0
+pygame>=2.5.2
+
+# ── TTS ───────────────────────────────────────────────────────────
+edge-tts>=6.1.9        # tốt hơn gTTS trên Pi, giọng tự nhiên hơn
+gTTS>=2.5.1            # fallback nếu edge-tts lỗi
+
+# ── Camera + cảm biến ─────────────────────────────────────────────
+opencv-python>=4.9.0   # chụp ảnh + blur detection
+# RPi.GPIO               # uncomment khi chạy trên Pi thật (không cài được trên máy thường)
+
+# ── Text correction (regex local) ─────────────────────────────────
+# (dùng backend/text_correction.py với use_llm=False — không cần Groq cho bước này)
+
+# ── Utilities ─────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+rich>=13.7.0
