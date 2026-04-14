@@ -7,16 +7,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 RUN useradd -m -u 1000 user
+
+# tạo thư mục và cấp quyền trước
+RUN mkdir -p /app/logs /app/data/chroma_db \
+    && chown -R user:user /app
+
 USER user
 ENV PATH="/home/user/.local/bin:$PATH"
 
 COPY --chown=user requirements.txt .
 
-# Cài torch CPU riêng trước
 RUN pip install --no-cache-dir --user \
     torch --index-url https://download.pytorch.org/whl/cpu
 
-# Cài phần còn lại từ PyPI bình thường
 RUN pip install --no-cache-dir --user \
     groq \
     sentence-transformers \
@@ -37,10 +40,11 @@ RUN pip install --no-cache-dir --user \
     pdfplumber \
     pymupdf \
     rich
+
 ENV SENTENCE_TRANSFORMERS_HOME=/home/user/.cache/torch/sentence_transformers
 ENV TRANSFORMERS_CACHE=/home/user/.cache/huggingface/transformers
 ENV HF_HOME=/home/user/.cache/huggingface
-# Pre-download model vào cache trong image luôn
+
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 
@@ -48,8 +52,6 @@ ENV TRANSFORMERS_OFFLINE=1
 ENV HF_DATASETS_OFFLINE=1
 
 COPY --chown=user . .
-
-RUN mkdir -p logs data/chroma_db
 
 EXPOSE 8000
 
