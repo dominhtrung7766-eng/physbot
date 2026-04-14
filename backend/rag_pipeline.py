@@ -1,3 +1,4 @@
+import os
 import re
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -7,9 +8,9 @@ COLLECTION_NAME = "physbot_sgk"
 
 TOP_K = 5
 FINAL_TOP_K = 3
-MAX_DISTANCE = 0.8
+MAX_DISTANCE = 1.0
 DEDUP_SIMILARITY = 0.6
-TOKEN_BUDGET = 1800
+TOKEN_BUDGET = 2000
 MAX_CHUNK_CHARS = 800
 
 _model = None
@@ -19,8 +20,11 @@ _collection = None
 def _get_model():
     global _model
     if _model is None:
+        cache_dir = os.getenv("SENTENCE_TRANSFORMERS_HOME", 
+                              "/home/user/.cache/torch/sentence_transformers")
         _model = SentenceTransformer(
-            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            cache_folder=cache_dir
         )
     return _model
 
