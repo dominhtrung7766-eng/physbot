@@ -37,7 +37,9 @@ RUN pip install --no-cache-dir --user \
     pdfplumber \
     pymupdf \
     rich
-
+ENV SENTENCE_TRANSFORMERS_HOME=/home/user/.cache/torch/sentence_transformers
+ENV TRANSFORMERS_CACHE=/home/user/.cache/huggingface/transformers
+ENV HF_HOME=/home/user/.cache/huggingface
 # Pre-download model vào cache trong image luôn
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
