@@ -6,25 +6,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Tạo folder + user khi còn là root
-RUN useradd -m -u 1000 user && \
-    mkdir -p logs data/chroma_db && \
-    chown -R user:user /app
-
+RUN useradd -m -u 1000 user
 USER user
 ENV PATH="/home/user/.local/bin:$PATH"
 
 COPY --chown=user requirements.txt .
 
-# Cài torch CPU riêng (index-url khác PyPI)
-RUN pip install --no-cache-dir --user \
-    torch --index-url https://download.pytorch.org/whl/cpu
-
-# Cài các package còn lại từ PyPI
 RUN pip install --no-cache-dir --user \
     groq \
     sentence-transformers \
     "transformers>=4.40.0" \
+    torch --index-url https://download.pytorch.org/whl/cpu \
     chromadb \
     fastapi \
     "uvicorn[standard]" \
@@ -41,9 +33,16 @@ RUN pip install --no-cache-dir --user \
     pdfplumber \
     pymupdf \
     rich
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
+
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_DATASETS_OFFLINE=1
 
 COPY --chown=user . .
 
+RUN mkdir -p logs data/chroma_db
+
 EXPOSE 8000
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
