@@ -1,13 +1,16 @@
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libglib2.0-0 libgl1 \
+    build-essential \
+    libglib2.0-0 \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 RUN useradd -m -u 1000 user
 USER user
+
 ENV PATH="/home/user/.local/bin:$PATH"
 
 COPY --chown=user requirements.txt .
@@ -16,7 +19,7 @@ RUN pip install --no-cache-dir --user \
     groq \
     sentence-transformers \
     "transformers>=4.40.0" \
-    torch --index-url https://download.pytorch.org/whl/cpu \
+    torch \
     chromadb \
     fastapi \
     "uvicorn[standard]" \
@@ -32,9 +35,10 @@ RUN pip install --no-cache-dir --user \
     PyPDF2 \
     pdfplumber \
     pymupdf \
-    rich
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-    SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
+    rich \
+    --extra-index-url https://download.pytorch.org/whl/cpu
+
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_DATASETS_OFFLINE=1
