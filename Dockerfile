@@ -50,9 +50,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; \
 
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_DATASETS_OFFLINE=1
-
+ENV HF_HUB_OFFLINE=0
 COPY --chown=user . .
 
-EXPOSE 8000
+EXPOSE 7860
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "7860"]
