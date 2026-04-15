@@ -8,7 +8,7 @@ THAY ĐỔI v3.2 so với v3.1:
           → server bind port ngay lập tức, không bị Render restart loop
   - Giữ nguyên toàn bộ logic v3.1
 """
-
+import re
 import json
 import os
 import base64
@@ -324,7 +324,7 @@ def _llm_call(messages: list[dict], use_tools: bool) -> object:
     kwargs = dict(model=MAIN_MODEL, max_tokens=MAX_TOKENS, messages=messages)
     if use_tools:
         kwargs["tools"]       = [CALCULATOR_TOOL_SCHEMA]
-        kwargs["tool_choice"] = "auto"
+        kwargs["tool_choice"] = "required" if use_tools else "auto"
     return groq_client.chat.completions.create(**kwargs)
 
 
@@ -346,7 +346,8 @@ def handle_normal(question: str, session_id: str = "") -> str:
     sess       = _get_session(session_id) if session_id else None
     history    = sess.messages if sess else []
     query_type = classify_query(question)
-    use_tools  = query_type in ("exercise", "mixed")
+    has_numbers = bool(re.search(r'\d+', question))
+    use_tools = query_type in ("exercise", "mixed") or has_numbers
 
     log.info("LLM call start",
              extra={"session_id": session_id, "query_type": query_type})
