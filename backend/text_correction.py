@@ -57,7 +57,7 @@ _RULES: list[tuple[str, str]] = [
     (r"\bΩm\b",     "ôm nhân mét"),
     (r"\bm/s²\b",   "mét trên giây bình phương"),
     (r"\bm/s2\b",   "mét trên giây bình phương"),
-    (r"\blực\s+(\d+)\s*Nm\b", r"lực \1 N")
+    (r"\blực\s+(\d+)\s*Nm\b", r"lực \1 N"),
 
     # ── SỬA KÝ HIỆU TOÁN HỌC (LLM vẫn viết) ──────────────────────────
     (r"(?<![a-zA-Z0-9])=(?![a-zA-Z0-9])",   " bằng "),
