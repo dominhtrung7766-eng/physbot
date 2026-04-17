@@ -126,6 +126,7 @@ Lỗi đơn vị & ký hiệu:
 "tê ta" → tê-ta | "an pha" → anpha | "bê ta" → bê-ta
 
 Lỗi thuật ngữ vật lý:
+"Độc năng" → động năng 
 "giá tốc"  → gia tốc
 "ma fast/fát/xát/mà sát" → ma sát | "nem/nêm ngang" → ném ngang | "cu lôm/lom" → culông
 "niu tơn/ton/tân" → niutơn | "sống/xóng" → sóng | "quán/quảng đường" → quãng đường
@@ -146,4 +147,4 @@ Lỗi động từ & cấu trúc câu:
 "giãi thích" → giải thích | "phân tít" → phân tích
 """
 
-CORRECTION_ADDON = ""
+CORRECTION_ADDON = ""   
