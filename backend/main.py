@@ -95,7 +95,9 @@ def _ensure_chromadb():
 _db_ready = threading.Event()
 
 def _download_db_background():
+    print("[startup] Bắt đầu download ChromaDB...", flush=True)
     _ensure_chromadb()
+    print("[startup] ChromaDB sẵn sàng!", flush=True)
     _db_ready.set()
 
 threading.Thread(target=_download_db_background, daemon=True).start()
