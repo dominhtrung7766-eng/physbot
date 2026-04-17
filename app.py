@@ -37,6 +37,7 @@ import re
 import tempfile
 import json
 import uuid
+import logging
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
@@ -57,10 +58,51 @@ groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ── Cấu hình server ───────────────────────────────────────────────
 API_BASE    = os.getenv("API_BASE_URL", "http://localhost:8000")
-API_TIMEOUT = float(os.getenv("API_TIMEOUT", "120"))
+API_TIMEOUT = float(os.getenv("API_TIMEOUT", "45"))
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+# ══════════════════════════════════════════════════════════════════
+# APP LOGGER — ghi ra stdout + logs/app.jsonl (giống format main.py)
+# Dùng app_log.info/warning/error thay vì print để xem log dễ hơn
+# Xem real-time: python scripts/watch_log.py
+# Chỉ lỗi:       python scripts/watch_log.py ERROR
+# ══════════════════════════════════════════════════════════════════
+
+class _AppJsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        obj = {
+            "ts":    datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "msg":   record.getMessage(),
+        }
+        for key in ("session_id", "turn", "stt_s", "api_s", "tts_s",
+                    "mode", "event", "question", "response_len"):
+            if hasattr(record, key):
+                obj[key] = getattr(record, key)
+        return json.dumps(obj, ensure_ascii=False)
+
+
+def _build_app_logger() -> logging.Logger:
+    logger = logging.getLogger("physbot.app")
+    logger.setLevel(logging.DEBUG)
+    if logger.handlers:          # tránh duplicate khi reload
+        return logger
+    # stdout
+    ch = logging.StreamHandler()
+    ch.setFormatter(_AppJsonFormatter())
+    logger.addHandler(ch)
+    # file
+    Path("logs").mkdir(exist_ok=True)
+    fh = logging.FileHandler("logs/app.jsonl", encoding="utf-8")
+    fh.setFormatter(_AppJsonFormatter())
+    logger.addHandler(fh)
+    return logger
+
+
+app_log = _build_app_logger()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -73,6 +115,7 @@ SESSION_ID         = os.getenv("SESSION_ID") or str(uuid.uuid4())[:8]
 SESSION_START_TIME = time.time()
 
 console.print(f"[dim]Session ID: {SESSION_ID}[/dim]")
+app_log.info(f"Session started", extra={"session_id": SESSION_ID})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -106,7 +149,13 @@ def _log_implicit(event: str, **kwargs):
         with open(_IMPLICIT_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as e:
-        console.print(f"[dim red]Implicit log lỗi: {e}[/dim red]")
+        app_log.error(f"Implicit log lỗi: {e}", extra={"session_id": SESSION_ID})
+
+    # Cũng ghi vào app_log để xem tập trung
+    app_log.info(f"implicit:{event}", extra={"session_id": SESSION_ID, **{
+        k: v for k, v in kwargs.items()
+        if k in ("question", "topic", "error", "last_response_len")
+    }})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -245,7 +294,7 @@ def capture_image_bytes() -> bytes | None:
         cam_index = int(os.getenv("CAMERA_INDEX", "0"))
         cap = cv2.VideoCapture(cam_index)
         if not cap.isOpened():
-            console.print("[red]Không mở được camera!")
+            app_log.error("Không mở được camera", extra={"session_id": SESSION_ID})
             return None
         time.sleep(0.5)
         ret, frame = cap.read()
@@ -256,10 +305,10 @@ def capture_image_bytes() -> bytes | None:
         return buf.tobytes()
 
     except ImportError:
-        console.print("[yellow]OpenCV chưa cài. Chạy: pip install opencv-python")
+        app_log.warning("OpenCV chưa cài", extra={"session_id": SESSION_ID})
         return None
     except Exception as e:
-        console.print(f"[red]Camera lỗi: {e}")
+        app_log.error(f"Camera lỗi: {e}", extra={"session_id": SESSION_ID})
         return None
 
 
@@ -271,7 +320,7 @@ def _check_image_quality(img_bytes: bytes) -> bool:
         img   = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
         score = cv2.Laplacian(img, cv2.CV_64F).var()
         min_score = float(os.getenv("BLUR_MIN_SCORE", "80"))
-        console.print(f"[dim]Blur score: {score:.1f} (min={min_score})[/dim]")
+        app_log.debug(f"Blur score={score:.1f} min={min_score}", extra={"session_id": SESSION_ID})
         return score >= min_score
     except Exception:
         return True
@@ -288,7 +337,7 @@ def guide_and_capture() -> bytes | None:
 
     for attempt in range(MAX_ATTEMPTS):
         dist = get_distance_cm()
-        console.print(f"[dim]Khoảng cách: {dist} cm[/dim]")
+        app_log.debug(f"Distance={dist}cm attempt={attempt+1}", extra={"session_id": SESSION_ID})
 
         if dist < 0:
             asyncio.run(speak("Cảm biến lỗi, tui chụp luôn nhé."))
@@ -321,7 +370,7 @@ def guide_and_capture() -> bytes | None:
             time.sleep(1.5)
             continue
 
-        console.print("[green]Ảnh đạt chất lượng!")
+        app_log.info("Ảnh đạt chất lượng", extra={"session_id": SESSION_ID})
         return img_bytes
 
     asyncio.run(speak("Thử nhiều lần rồi, tui gửi ảnh hiện tại lên nhé."))
@@ -350,14 +399,16 @@ def call_api_ask(text: str) -> str:
 
             return answer
     except httpx.ConnectError:
+        app_log.error("ConnectError /ask", extra={"session_id": SESSION_ID, "event": "api_error"})
         _log_implicit("api_error", error="ConnectError", endpoint="/ask")
         return "Tui không kết nối được server, bạn kiểm tra wifi nha!"
     except httpx.TimeoutException:
+        app_log.error("Timeout /ask", extra={"session_id": SESSION_ID, "event": "api_error"})
         _log_implicit("api_error", error="Timeout", endpoint="/ask")
         return "Server trả lời quá lâu, bạn thử lại nha!"
     except Exception as e:
+        app_log.error(f"API /ask lỗi: {e}", extra={"session_id": SESSION_ID, "event": "api_error"})
         _log_implicit("api_error", error=str(e)[:80], endpoint="/ask")
-        console.print(f"[red]API /ask lỗi: {e}")
         return "Có lỗi xảy ra, bạn thử lại sau nha!"
 
 
@@ -372,11 +423,13 @@ def call_api_ocr(img_bytes: bytes) -> str:
             r.raise_for_status()
             return r.json().get("answer", "")
     except httpx.ConnectError:
+        app_log.error("ConnectError /ocr", extra={"session_id": SESSION_ID})
         return "Tui không kết nối được server, bạn kiểm tra wifi nha!"
     except httpx.TimeoutException:
+        app_log.error("Timeout /ocr", extra={"session_id": SESSION_ID})
         return "Server trả lời quá lâu, bạn thử lại nha!"
     except Exception as e:
-        console.print(f"[red]API /ocr lỗi: {e}")
+        app_log.error(f"API /ocr lỗi: {e}", extra={"session_id": SESSION_ID})
         return "Có lỗi xảy ra, bạn thử lại sau nha!"
 
 
@@ -392,11 +445,13 @@ def call_api_solve_image(img_bytes: bytes) -> str:
             r.raise_for_status()
             return r.json().get("answer", "")
     except httpx.ConnectError:
+        app_log.error("ConnectError /solve_image", extra={"session_id": SESSION_ID})
         return "Tui không kết nối được server, bạn kiểm tra wifi nha!"
     except httpx.TimeoutException:
+        app_log.error("Timeout /solve_image", extra={"session_id": SESSION_ID})
         return "Server trả lời quá lâu, bạn thử lại nha!"
     except Exception as e:
-        console.print(f"[red]API /solve_image lỗi: {e}")
+        app_log.error(f"API /solve_image lỗi: {e}", extra={"session_id": SESSION_ID})
         return "Có lỗi xảy ra, bạn thử lại sau nha!"
 
 
@@ -406,7 +461,7 @@ def get_response(text: str) -> str:
     [S1] session_id truyền lên server → server nhớ history.
     """
     mode = detect_mode(text)
-    console.print(f"[dim]Mode: {mode}[/dim]")
+    app_log.info(f"Mode={mode}", extra={"session_id": SESSION_ID, "mode": mode})
 
     if mode == "NORMAL":
         return call_api_ask(text)
@@ -437,7 +492,7 @@ def record_audio(stop_event, data_queue, silence_threshold=0.01, silence_duratio
     def callback(indata, frames, time_info, status):
         nonlocal silent_chunks, started
         if status:
-            console.print(f"[dim]{status}[/dim]")
+            app_log.warning(f"sounddevice status: {status}", extra={"session_id": SESSION_ID})
         data_queue.put(bytes(indata))
         audio_np = (
             np.frombuffer(bytes(indata), dtype=np.int16)
@@ -447,14 +502,14 @@ def record_audio(stop_event, data_queue, silence_threshold=0.01, silence_duratio
         if not started:
             if energy > silence_threshold:
                 started = True
-                console.print("[dim]Đã phát hiện giọng nói...[/dim]")
+                app_log.debug("Voice detected", extra={"session_id": SESSION_ID})
             return
         if energy < silence_threshold:
             silent_chunks += 1
         else:
             silent_chunks = 0
         if silent_chunks >= silence_duration / chunk_duration:
-            console.print(f"[dim]Im lặng {silence_duration}s, dừng ghi...[/dim]")
+            app_log.debug(f"Silence {silence_duration}s → stop recording", extra={"session_id": SESSION_ID})
             stop_event.set()
 
     while not data_queue.empty():
@@ -481,7 +536,7 @@ def transcribe(audio_np: np.ndarray) -> str:
         if energy < 0.05:
             gain     = min(0.05 / (energy + 1e-9), 10.0)
             audio_np = np.clip(audio_np * gain, -1.0, 1.0)
-            console.print(f"[dim]Khuếch đại x{gain:.1f}[/dim]")
+            app_log.debug(f"Audio gain x{gain:.1f}", extra={"session_id": SESSION_ID})
 
         if len(audio_np) / 16000 < 0.8:
             return ""
@@ -496,7 +551,7 @@ def transcribe(audio_np: np.ndarray) -> str:
         os.unlink(tmp_path)
         return result.text.strip()
     except Exception as e:
-        console.print(f"[red]STT lỗi: {e}")
+        app_log.error(f"STT lỗi: {e}", extra={"session_id": SESSION_ID})
         return ""
 
 
@@ -645,7 +700,7 @@ async def speak(text: str):
         return
     if text[-1] not in '.!?':
         text += '.'
-    console.print(f"[magenta]TTS ({len(text)} ký tự): {repr(text[:120])}[/magenta]")
+    app_log.debug(f"TTS {len(text)}c: {text[:80]}", extra={"session_id": SESSION_ID})
 
     # Thử edge-tts trước (chất lượng tốt hơn gTTS)
     try:
@@ -670,7 +725,7 @@ async def speak(text: str):
     except ImportError:
         pass
     except Exception as e:
-        console.print(f"[yellow]edge-tts lỗi: {e}, fallback gTTS")
+        app_log.warning(f"edge-tts lỗi: {e}, fallback gTTS", extra={"session_id": SESSION_ID})
 
     # Fallback: gTTS
     try:
@@ -691,7 +746,7 @@ async def speak(text: str):
         pygame.mixer.music.unload()
         os.unlink(tmp_path)
     except Exception as e:
-        console.print(f"[red]TTS lỗi hoàn toàn: {e}")
+        app_log.error(f"TTS lỗi hoàn toàn: {e}", extra={"session_id": SESSION_ID})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -715,7 +770,12 @@ if __name__ == "__main__":
                 f"[green]Server OK — model: {info.get('model','?')} | "
                 f"chromadb: {info.get('chromadb','?')}"
             )
-    except Exception:
+            app_log.info(
+                f"Server OK model={info.get('model','?')} chromadb={info.get('chromadb','?')}",
+                extra={"session_id": SESSION_ID}
+            )
+    except Exception as e:
+        app_log.warning(f"Không kết nối được server: {e}", extra={"session_id": SESSION_ID})
         console.print(f"[red]Cảnh báo: Không kết nối được server tại {API_BASE}")
 
     turn_count = 0
@@ -744,6 +804,7 @@ if __name__ == "__main__":
             )
 
             if audio_np.size == 0:
+                app_log.warning("Không có audio", extra={"session_id": SESSION_ID})
                 console.print("[red]Không nghe thấy gì. Kiểm tra lại mic.")
                 continue
 
@@ -760,9 +821,14 @@ if __name__ == "__main__":
             console.print(f"[yellow]Bạn (raw) : {raw_text}")
             if text != raw_text:
                 console.print(f"[yellow]Bạn (fixed): {text}")
-            console.print(f"[dim]STT: {t1-t0:.2f}s[/dim]")
+
+            app_log.info(
+                f"STT: {raw_text[:80]}",
+                extra={"session_id": SESSION_ID, "stt_s": round(t1 - t0, 2)}
+            )
 
             if not text.strip():
+                app_log.warning("STT rỗng", extra={"session_id": SESSION_ID})
                 console.print("[red]Không nhận ra giọng nói, thử lại nhé!")
                 continue
 
@@ -780,7 +846,6 @@ if __name__ == "__main__":
                 _log_implicit("not_understand",
                                question=text[:80],
                                last_response_preview=_last_response[:80])
-                console.print("[dim yellow]Implicit: chưa hiểu → gọi API giải thích lại[/dim yellow]")
 
             # ── [S3] Detect hỏi lại cùng chủ đề ─────────────────
             current_topic = _extract_topic(text)
@@ -788,19 +853,16 @@ if __name__ == "__main__":
                 _log_implicit("rephrase_same",
                                topic=current_topic,
                                question=text[:80])
-                console.print(f"[dim yellow]Implicit: hỏi lại chủ đề '{current_topic}'[/dim yellow]")
             _last_topic = current_topic
 
             # ── [S2] Keep data fallback ───────────────────────────
-            # Server đã có session history → ít cần, nhưng giữ làm safety net
             if _is_keep_data_request(text) and _last_numbers:
                 text = f"{text}. Số liệu đã cho từ bài trước: {_last_numbers}"
-                console.print(f"[dim]→ Inject số liệu cũ (fallback): {_last_numbers}[/dim]")
+                app_log.debug(f"Inject số liệu cũ: {_last_numbers}", extra={"session_id": SESSION_ID})
 
             extracted = _extract_numbers(text)
             if extracted:
                 _last_numbers = extracted
-                console.print(f"[dim]→ Lưu số liệu: {_last_numbers}[/dim]")
 
             # ── Gọi API server ────────────────────────────────────
             with console.status("Đang xử lý...", spinner="dots"):
@@ -810,6 +872,17 @@ if __name__ == "__main__":
 
             _last_response = response
             turn_count += 1
+
+            app_log.info(
+                f"API answered",
+                extra={
+                    "session_id":   SESSION_ID,
+                    "api_s":        round(t3 - t2, 2),
+                    "turn":         turn_count,
+                    "response_len": len(response),
+                    "question":     text[:60],
+                }
+            )
 
             # Cắt nếu quá dài
             if len(response) > 2000:
@@ -829,12 +902,24 @@ if __name__ == "__main__":
 
             console.print(f"[dim]TTS: {t5-t4:.2f}s | Tổng: {t5-t0:.2f}s[/dim]")
 
+            app_log.info(
+                "Turn done",
+                extra={
+                    "session_id": SESSION_ID,
+                    "tts_s":      round(t5 - t4, 2),
+                    "turn":       turn_count,
+                }
+            )
+
     except KeyboardInterrupt:
-        # ── [S3] Log session_end ──────────────────────────────────
         duration_min = round((time.time() - SESSION_START_TIME) / 60, 1)
         _log_implicit("session_end",
                        total_turns=turn_count,
                        duration_minutes=duration_min)
+        app_log.info(
+            f"Session end turns={turn_count} duration={duration_min}min",
+            extra={"session_id": SESSION_ID, "turn": turn_count}
+        )
         console.print(
             f"\n[dim]Session {SESSION_ID}: {turn_count} lượt, "
             f"{duration_min} phút → đã log[/dim]"
