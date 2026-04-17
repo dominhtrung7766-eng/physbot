@@ -6,16 +6,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN useradd -m -u 1000 user
-
-# tạo thư mục và cấp quyền trước
-RUN mkdir -p /app/logs /app/data/chroma_db \
-    && chown -R user:user /app
+RUN useradd -m -u 1000 user && \
+    mkdir -p /app/logs /app/data/chroma_db && \
+    chown -R user:user /app
 
 USER user
 ENV PATH="/home/user/.local/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
 
-COPY --chown=user requirements.txt .
+COPY --chown=user:user requirements.txt .
 
 RUN pip install --no-cache-dir --user \
     torch --index-url https://download.pytorch.org/whl/cpu
@@ -51,8 +50,8 @@ RUN python -c "from sentence_transformers import SentenceTransformer; \
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_DATASETS_OFFLINE=1
 ENV HF_HUB_OFFLINE=0
-COPY --chown=user . .
+
+COPY --chown=user:user . .
 
 EXPOSE 7860
-
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "7860"]
