@@ -98,7 +98,6 @@ def _download_db_background():
     print("[startup] Bắt đầu download ChromaDB...", flush=True)
     _ensure_chromadb()
     print("[startup] ChromaDB sẵn sàng!", flush=True)
-    _db_ready.set()
 
 threading.Thread(target=_download_db_background, daemon=True).start()
 
@@ -112,6 +111,7 @@ from backend.rag_pipeline import (
 )
 from backend.calculator import handle_tool_call, CALCULATOR_TOOL_SCHEMA
 from backend.prompts import TTS_RULES, PHYSBOT_SYSTEM_PROMPT, VOICE_INPUT_ADDON
+_db_ready.set()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -475,7 +475,7 @@ class IngestPDFRequest(BaseModel):
 @limiter.limit("30/minute")
 async def ask(req: AskRequest, request: Request):
     # Chờ ChromaDB sẵn sàng, tối đa 60 giây
-    if not _db_ready.wait(timeout=120):
+    if not _db_ready.wait(timeout=90):
         raise HTTPException(status_code=503,
                             detail="Database đang khởi động, thử lại sau 30 giây")
     _prune_expired_sessions()
@@ -653,7 +653,7 @@ async def health():
     db_path = Path("data/chroma_db")
     db_ok   = db_path.exists() and any(db_path.iterdir())
     return {
-        "status":          "ok",
+        "status":          "ok" if ready else "starting",
         "version":         "3.2",
         "model":           MAIN_MODEL,
         "vision_models":   VISION_MODELS,
