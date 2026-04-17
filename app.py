@@ -57,7 +57,7 @@ groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ── Cấu hình server ───────────────────────────────────────────────
 API_BASE    = os.getenv("API_BASE_URL", "http://localhost:8000")
-API_TIMEOUT = float(os.getenv("API_TIMEOUT", "45"))
+API_TIMEOUT = float(os.getenv("API_TIMEOUT", "120"))
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
