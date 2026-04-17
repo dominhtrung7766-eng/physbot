@@ -652,8 +652,9 @@ async def debug_rag(req: AskRequest):
 async def health():
     db_path = Path("data/chroma_db")
     db_ok   = db_path.exists() and any(db_path.iterdir())
+
     return {
-        "status":          "ok" if ready else "starting",
+        "status":          "ok" if _db_ready.is_set() else "starting",
         "version":         "3.2",
         "model":           MAIN_MODEL,
         "vision_models":   VISION_MODELS,
