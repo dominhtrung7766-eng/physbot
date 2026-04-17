@@ -473,7 +473,7 @@ class IngestPDFRequest(BaseModel):
 @limiter.limit("30/minute")
 async def ask(req: AskRequest, request: Request):
     # Chờ ChromaDB sẵn sàng, tối đa 60 giây
-    if not _db_ready.wait(timeout=60):
+    if not _db_ready.wait(timeout=120):
         raise HTTPException(status_code=503,
                             detail="Database đang khởi động, thử lại sau 30 giây")
     _prune_expired_sessions()
