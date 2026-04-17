@@ -98,7 +98,7 @@ def _download_db_background():
     print("[startup] Bắt đầu download ChromaDB...", flush=True)
     _ensure_chromadb()
     print("[startup] ChromaDB sẵn sàng!", flush=True)
-
+    _db_ready.set()
 threading.Thread(target=_download_db_background, daemon=True).start()
 
 
@@ -111,7 +111,7 @@ from backend.rag_pipeline import (
 )
 from backend.calculator import handle_tool_call, CALCULATOR_TOOL_SCHEMA
 from backend.prompts import TTS_RULES, PHYSBOT_SYSTEM_PROMPT, VOICE_INPUT_ADDON
-_db_ready.set()
+
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -662,3 +662,4 @@ async def health():
         "db_ready":        _db_ready.is_set(),
         "active_sessions": len(_sessions),
     }
+  
