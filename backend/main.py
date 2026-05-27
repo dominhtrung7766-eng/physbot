@@ -7,6 +7,12 @@ THAY ĐỔI v3.2 so với v3.1:
   - [FIX] ChromaDB download chạy trong background thread
           → server bind port ngay lập tức, không bị Render restart loop
   - Giữ nguyên toàn bộ logic v3.1
+
+THAY ĐỔI v3.2.1 (bugfix):
+  - [FIX] tool_choice "required" → "auto": LLM tự quyết có cần tính không
+          → tránh LLM force gọi calculate với expression là text lý thuyết
+  - [FIX] use_tools chỉ True khi query_type == "exercise" VÀ có số liệu thực
+          → câu hỏi lý thuyết ("mối quan hệ", "là gì"...) không trigger tool
 """
 import re
 import json
@@ -90,19 +96,18 @@ def _ensure_chromadb():
 
 
 # ── [FIX v3.2] Download trong background — KHÔNG block startup ───
-# Server bind port ngay lập tức → Render health check pass
-# Request đến trong lúc DB chưa ready → trả 503 thay vì crash
 _db_ready = threading.Event()
 
 def _download_db_background():
     print("[startup] Bắt đầu download ChromaDB...", flush=True)
     _ensure_chromadb()
     print("[startup] ChromaDB sẵn sàng!", flush=True)
+    _db_ready.set()
 
 threading.Thread(target=_download_db_background, daemon=True).start()
 
 
-# ── Import sau khi thread đã start (rag_pipeline load lazy) ──────
+# ── Import sau khi thread đã start ───────────────────────────────
 from backend.rag_pipeline import (
     retrieve_context,
     build_rag_prompt,
@@ -111,7 +116,6 @@ from backend.rag_pipeline import (
 )
 from backend.calculator import handle_tool_call, CALCULATOR_TOOL_SCHEMA
 from backend.prompts import TTS_RULES, PHYSBOT_SYSTEM_PROMPT, VOICE_INPUT_ADDON
-_db_ready.set()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -186,7 +190,7 @@ FULL_SYSTEM_PROMPT = TTS_RULES + "\n\n" + PHYSBOT_SYSTEM_PROMPT + "\n\n" + VOICE
 # ══════════════════════════════════════════════════════════════════
 
 limiter = Limiter(key_func=get_remote_address)
-app     = FastAPI(title="PhysBot API", version="3.2")
+app     = FastAPI(title="PhysBot API", version="3.2.1")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
@@ -310,6 +314,45 @@ def _process_tool_calls(tool_calls, messages: list, loop_idx: int,
 
 
 # ══════════════════════════════════════════════════════════════════
+# [FIX v3.2.1] LOGIC QUYẾT ĐỊNH CÓ DÙNG TOOL KHÔNG
+#
+# Trước đây: use_tools = query_type in ("exercise", "mixed") or has_numbers
+#   → câu lý thuyết có chữ số (vd: "lớp 10") hoặc query_type="mixed" đều bật tool
+#   → LLM bị force gọi calculate với expression="cơ năng" → 400 error
+#
+# Sau sửa: chỉ bật tool khi query_type == "exercise" (có từ khoá tính toán + số liệu)
+#   → câu lý thuyết ("mixed", "theory") KHÔNG dùng tool
+#   → tool_choice = "auto" thay vì "required" để LLM tự quyết
+# ══════════════════════════════════════════════════════════════════
+
+def _should_use_tools(question: str, query_type: str) -> bool:
+    """
+    Chỉ bật tool calculator khi câu hỏi là bài tập tính toán thực sự:
+    - query_type == "exercise" (có từ khoá tính + số liệu có đơn vị)
+    - Hoặc có số liệu vật lý RÕ RÀNG kèm đơn vị (vd: "2 kg", "v = 5 m/s")
+
+    KHÔNG bật tool khi:
+    - query_type == "theory" hoặc "mixed" (câu lý thuyết / hỗn hợp)
+    - Câu hỏi chỉ có số đơn lẻ không kèm đơn vị vật lý
+    """
+    if query_type == "theory":
+        return False
+
+    if query_type == "exercise":
+        return True
+
+    # "mixed": chỉ bật nếu có số + đơn vị vật lý rõ ràng
+    has_physics_number = bool(re.search(
+        r'\d+(?:[,\.]\d+)?\s*'
+        r'(?:m/s|km/h|m\b|cm\b|kg\b|N\b|J\b|W\b|V\b|A\b|Hz\b|Pa\b|'
+        r'Ω\b|s\b|độ\b|rad\b|°C\b|K\b)',
+        question,
+        re.IGNORECASE,
+    ))
+    return has_physics_number
+
+
+# ══════════════════════════════════════════════════════════════════
 # MODE HANDLERS
 # ══════════════════════════════════════════════════════════════════
 
@@ -328,14 +371,15 @@ def _llm_call(messages: list[dict], use_tools: bool) -> object:
     kwargs = dict(model=MAIN_MODEL, max_tokens=MAX_TOKENS, messages=messages)
     if use_tools:
         kwargs["tools"]       = [CALCULATOR_TOOL_SCHEMA]
-        kwargs["tool_choice"] = "required" if use_tools else "auto"
+        # [FIX] "auto" thay vì "required" — LLM tự quyết có cần gọi tool không
+        # "required" buộc LLM gọi tool ngay cả với câu lý thuyết → 400 error
+        kwargs["tool_choice"] = "auto"
     return groq_client.chat.completions.create(**kwargs)
 
 
 def handle_normal(question: str, session_id: str = "") -> str:
     t0 = time.perf_counter()
 
-    # Đảm bảo DB sẵn sàng trước khi RAG
     if not _db_ready.wait(timeout=120):
         log.warning("DB not ready after 120s", extra={"session_id": session_id})
 
@@ -350,8 +394,9 @@ def handle_normal(question: str, session_id: str = "") -> str:
     sess       = _get_session(session_id) if session_id else None
     history    = sess.messages if sess else []
     query_type = classify_query(question)
-    has_numbers = bool(re.search(r'\d+', question))
-    use_tools = query_type in ("exercise", "mixed") or has_numbers
+
+    # [FIX] Dùng hàm mới thay vì: use_tools = query_type in ("exercise","mixed") or has_numbers
+    use_tools = _should_use_tools(question, query_type)
 
     log.info("LLM call start",
              extra={"session_id": session_id, "query_type": query_type})
@@ -474,7 +519,6 @@ class IngestPDFRequest(BaseModel):
 @app.post("/ask")
 @limiter.limit("30/minute")
 async def ask(req: AskRequest, request: Request):
-    # Chờ ChromaDB sẵn sàng, tối đa 60 giây
     if not _db_ready.wait(timeout=90):
         raise HTTPException(status_code=503,
                             detail="Database đang khởi động, thử lại sau 30 giây")
@@ -615,8 +659,9 @@ async def admin_delete_session(session_id: str):
 
 
 # ══════════════════════════════════════════════════════════════════
-# HEALTH
+# DEBUG & HEALTH
 # ══════════════════════════════════════════════════════════════════
+
 @app.get("/debug/db")
 async def debug_db():
     import chromadb as _chromadb
@@ -644,10 +689,12 @@ async def debug_rag(req: AskRequest):
         groq_client=groq_client,
     )
     return {
-        "question": req.question,
-        "context_length": len(context),
+        "question":        req.question,
+        "context_length":  len(context),
         "context_preview": context[:500] if context else "EMPTY",
     }
+
+
 @app.get("/health")
 async def health():
     db_path = Path("data/chroma_db")
@@ -655,7 +702,7 @@ async def health():
 
     return {
         "status":          "ok" if _db_ready.is_set() else "starting",
-        "version":         "3.2",
+        "version":         "3.2.1",
         "model":           MAIN_MODEL,
         "vision_models":   VISION_MODELS,
         "chromadb":        "ok" if db_ok else "downloading",
