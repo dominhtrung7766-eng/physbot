@@ -1,21 +1,17 @@
 """
-app.py  —  PhysBot Pi Client v2.9.2
+app.py  —  PhysBot Pi Client v2.9.5
 ──────────────────────────────────
-THAY ĐỔI v2.9.2 so với v2.9.1:
-  [FIX 1] pygame.mixer.init() dùng plughw:0,0 → tránh xung đột ALSA với mic
-  [FIX 2] HF upload thêm trường "summary" → tránh lỗi 400
-  [FIX 3] _beep() init pygame với AUDIODEV=plughw:0,0 trước khi init mixer
+THAY ĐỔI v2.9.5:
+  [FIX] Stream chạy liên tục, không stop/start khi TTS
+        → triệt để ALSA underrun
+        → dùng _tts_playing flag để drop data trong callback
 """
 
-# ══════════════════════════════════════════════════════════════════
-# PHẢI SET TRƯỚC KHI IMPORT SOUNDDEVICE
-# ══════════════════════════════════════════════════════════════════
 import os
 os.environ["PA_ALSA_PLUGHW"]    = "1"
 os.environ["ORT_LOGGING_LEVEL"] = "3"
-# [FIX 1] Buộc pygame/SDL dùng plughw để không xung đột với mic stream
 os.environ["SDL_AUDIODRIVER"]   = "alsa"
-os.environ["AUDIODEV"]          = "plughw:0,0"
+os.environ["AUDIODEV"]          = "default"
 
 import time
 import threading
@@ -124,7 +120,7 @@ def _resample(audio_hw: np.ndarray) -> np.ndarray:
 # ══════════════════════════════════════════════════════════════════
 
 WAKE_MODEL        = os.getenv("WAKE_MODEL", "hey_jarvis")
-WAKE_THRESHOLD    = float(os.getenv("WAKE_THRESHOLD", "0.92"))
+WAKE_THRESHOLD    = float(os.getenv("WAKE_THRESHOLD", "0.95"))
 ENERGY_MIN        = float(os.getenv("WAKE_ENERGY_MIN", "0.02"))
 WAKE_COOLDOWN_SEC = 3.0
 POST_TTS_MUTE_SEC = float(os.getenv("POST_TTS_MUTE_SEC", "3.0"))
@@ -170,6 +166,7 @@ _custom_audio_buf: np.ndarray = np.zeros(0, dtype=np.int16)
 def _unified_audio_callback(indata: np.ndarray, frames: int, time_info, status):
     global _wake_last_trigger, _custom_audio_buf, _stream_warmed_up
 
+    # DROP data khi TTS đang phát — không cần stop stream
     if _tts_playing:
         return
 
@@ -214,6 +211,9 @@ def _unified_audio_callback(indata: np.ndarray, frames: int, time_info, status):
                     score = max(score, float(buf[-1]))
 
         if score >= WAKE_THRESHOLD:
+            energy = np.abs(audio_16k).mean()
+            if energy < 0.01:
+                return
             now = time.time()
             if (now - _wake_last_trigger > WAKE_COOLDOWN_SEC
                     and now - _last_deactivate_ts > WAKE_POST_DEACTIVATE_COOLDOWN):
@@ -316,7 +316,7 @@ def _log_to_hf():
         api_url = f"https://huggingface.co/api/datasets/{HF_DATASET_REPO}/commit/main"
         payload = {
             "commit_message": f"log {SESSION_ID} {ts_str}",
-            "summary":        f"log {SESSION_ID} {ts_str}",  # [FIX 2]
+            "summary":        f"log {SESSION_ID} {ts_str}",
             "operations": [
                 {
                     "operation": "addOrUpdate",
@@ -401,7 +401,7 @@ def _extract_numbers(text: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════
-# BEEP — [FIX 3] init pygame với buffer nhỏ, dùng plughw qua env
+# BEEP
 # ══════════════════════════════════════════════════════════════════
 
 _pygame_mixer_ready = False
@@ -413,7 +413,7 @@ def _init_pygame_mixer():
     try:
         import pygame
         if not pygame.mixer.get_init():
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=4096)
         _pygame_mixer_ready = True
         return True
     except Exception as e:
@@ -776,7 +776,7 @@ def _deactivate_bot(reason: str = "timeout"):
         _bot_state = STATE_IDLE
     _last_deactivate_ts = time.time()
     console.print(f"[dim]── IDLE ({reason}) ──[/dim]")
-    _beep(440, 0.3)
+    _beep(440, 0.5, 0.8)
     _activated_event.clear()
 
 
@@ -791,7 +791,6 @@ def _idle_timeout_watcher():
             elapsed = time.time() - _last_active_ts
             if elapsed >= IDLE_TIMEOUT_SEC:
                 console.print(f"[dim]Timeout {IDLE_TIMEOUT_SEC:.0f}s → về IDLE[/dim]")
-                asyncio.run(speak("Tui về chờ rồi nha."))
                 _deactivate_bot("timeout")
 
 
@@ -988,6 +987,8 @@ def _post_tts_cleanup(extra_mute: float = 0.0):
     _flush_record_queue()
     _last_active_ts = time.time()
     _tts_playing    = False
+    if _bot_state == STATE_ACTIVE:
+        _beep(880, 0.15, 0.5)
     console.print(f"[dim]Mic bật lại (mute {total_mute:.1f}s)[/dim]")
 
 
@@ -1001,8 +1002,6 @@ async def speak(text: str):
     console.print(f"[magenta]TTS ({len(text)} ký tự): {repr(text[:80])}[/magenta]")
     _tts_playing    = True
     _last_active_ts = time.time()
-
-    # [FIX 1] Init pygame mixer 1 lần duy nhất với plughw
     _init_pygame_mixer()
 
     try:
@@ -1022,7 +1021,7 @@ async def speak(text: str):
         pygame.mixer.music.stop()
         pygame.mixer.music.unload()
         os.unlink(tmp_path)
-        extra_mute = min(len(text) / 80, 3.0)
+        extra_mute = min(len(text) / 200, 2.0)
         threading.Thread(target=_post_tts_cleanup, args=(extra_mute,), daemon=True).start()
         return
     except ImportError:
@@ -1049,7 +1048,7 @@ async def speak(text: str):
     except Exception as e:
         console.print(f"[red]TTS lỗi hoàn toàn: {e}")
     finally:
-        extra_mute = min(len(text) / 80, 3.0)
+        extra_mute = min(len(text) / 200, 2.0)
         threading.Thread(target=_post_tts_cleanup, args=(extra_mute,), daemon=True).start()
 
 
@@ -1089,6 +1088,8 @@ def process_turn(text: str):
         _last_numbers = extracted
 
     _log_implicit("question", question=corrected[:120])
+
+    asyncio.run(speak("Oke, đợi tui một chút nhé!"))
 
     with console.status("Đang xử lý...", spinner="dots"):
         t0       = time.time()
@@ -1157,14 +1158,14 @@ def active_loop():
 
 if __name__ == "__main__":
     console.print("[cyan]╔══════════════════════════════════════╗[/cyan]")
-    console.print("[cyan]║     PhysBot Pi Client v2.9.2         ║[/cyan]")
-    console.print("[cyan]║     Custom Wake Word Edition         ║[/cyan]")
+    console.print("[cyan]║     PhysBot Pi Client v2.9.5         ║[/cyan]")
+    console.print("[cyan]║     No ALSA Underrun Edition         ║[/cyan]")
     console.print("[cyan]╚══════════════════════════════════════╝[/cyan]")
     console.print(f"[cyan]Server   : {API_BASE}")
     console.print(f"[cyan]Session  : {SESSION_ID}")
     console.print(f"[cyan]Wake     : model='{WAKE_MODEL}' threshold={WAKE_THRESHOLD}")
     console.print(f"[cyan]Energy   : {ENERGY_MIN} | PostTTS mute: {POST_TTS_MUTE_SEC}s")
-    console.print(f"[cyan]Timeout  : {IDLE_TIMEOUT_SEC:.0f}s → IDLE (tạm dừng khi TTS)")
+    console.print(f"[cyan]Timeout  : {IDLE_TIMEOUT_SEC:.0f}s → IDLE")
     console.print(f"[cyan]Warmup   : {STREAM_WARMUP_SEC:.0f}s sau khi stream start")
     console.print(f"[cyan]Mic      : device={INPUT_DEVICE} @ {HW_SR}Hz/{HW_CHANNELS}ch → {TARGET_SR}Hz")
     hf_status = HF_DATASET_REPO if (HF_TOKEN and HF_DATASET_REPO) else "không cấu hình"
@@ -1189,17 +1190,14 @@ if __name__ == "__main__":
     except Exception:
         console.print(f"[yellow]⚠ Không kết nối được server tại {API_BASE}")
 
-    # Init pygame mixer sớm để beep đầu tiên không lỗi
     _init_pygame_mixer()
-
     model_ok = _load_wake_model()
-
-    _unified_stream = _start_unified_stream()
+    _stream = _start_unified_stream()
 
     if not model_ok:
         threading.Thread(target=_fallback_enter_listener, daemon=True).start()
 
-    if _unified_stream is None:
+    if _stream is None:
         console.print("[yellow]⚠ Chạy không có mic — chỉ dùng Enter mode[/yellow]")
         threading.Thread(target=_fallback_enter_listener, daemon=True).start()
 
@@ -1220,6 +1218,6 @@ if __name__ == "__main__":
         console.print(f"\n[dim]Session {SESSION_ID}: {duration_min} phút[/dim]")
         _log_to_hf()
         console.print("[red]Thoát...")
-        if _unified_stream:
-            _unified_stream.stop()
-            _unified_stream.close()
+        if _stream:
+            _stream.stop()
+            _stream.close()
